@@ -65,8 +65,28 @@ def _label_for_score(s: float) -> tuple[str, str]:
     return ("Poor", "red")
 
 
+def _growth_score(values: list[float]) -> float:
+    """Convert a metric's average growth rate into a 0-10 score.
+
+    The Rule #1 bar is 10%. We want the score to rise meaningfully from there,
+    but without giving a single outlier a disproportionate effect. A metric that
+    averages 20% growth earns a 10/10 score, while 10% is worth 5/10.
+    """
+    if not values:
+        return 0.0
+    avg_growth = sum(values) / len(values)
+    if avg_growth <= 0:
+        return 0.0
+    return max(0.0, min(10.0, (avg_growth / 0.20) * 10.0))
+
+
 def score_wonderfulness(big5: "Big5Result") -> WonderfulnessScore:
     """Compute a 0-10 wonderfulness score from a Big5Result.
+
+    The score blends three things:
+      - how many Big 5 checks pass the 10% Rule #1 bar,
+      - how quickly the business is growing on average,
+      - how stable that growth is across windows.
 
     Only counts checks that were computable (some windows return None on short
     history). This means a ticker with 4 years of yfinance-only data is scored
@@ -74,8 +94,7 @@ def score_wonderfulness(big5: "Big5Result") -> WonderfulnessScore:
     """
     metrics = [big5.roic, big5.sales, big5.eps, big5.equity, big5.fcf]
 
-    # 1. Pass Rate — computed checks that beat 10%.
-    computed = []  # (metric, window, value)
+    computed = []
     for m in metrics:
         for w, v in m.values.items():
             if v is not None:
@@ -84,13 +103,13 @@ def score_wonderfulness(big5: "Big5Result") -> WonderfulnessScore:
     checks_passed = sum(1 for _, _, v in computed if v >= PASS_THRESHOLD)
     pass_rate = (checks_passed / checks_total * 10) if checks_total else 0.0
 
-    # 2. Magnitude — average cushion above the 10% bar, capped so a single
-    # freakishly-high value (e.g. one-off ROIC of 200%) can't dominate.
-    cushions = [max(0.0, min(v - PASS_THRESHOLD, 0.30)) for _, _, v in computed]  # cap at +30 pts above 10%
-    # 0 cushion -> 0; +30pts cushion -> 10
-    magnitude = (sum(cushions) / len(cushions) / 0.30 * 10) if cushions else 0.0
+    metric_scores = []
+    for m in metrics:
+        vals = [v for v in m.values.values() if v is not None]
+        if vals:
+            metric_scores.append(_growth_score(vals))
+    magnitude = (sum(metric_scores) / len(metric_scores)) if metric_scores else 0.0
 
-    # 3. Consistency — reward metrics with low variance across their windows.
     per_metric_std = []
     for m in metrics:
         vals = [v for v in m.values.values() if v is not None]
@@ -100,23 +119,22 @@ def score_wonderfulness(big5: "Big5Result") -> WonderfulnessScore:
             per_metric_std.append(var ** 0.5)
     if per_metric_std:
         avg_std = sum(per_metric_std) / len(per_metric_std)
-        # A std of 0 → 10, std of 0.15 (15pt swings between windows) → 0.
+        # 0% volatility -> 10; 15 percentage points of average swing -> 0.
         consistency = max(0.0, min(10.0, (0.15 - avg_std) / 0.15 * 10))
     else:
         consistency = 0.0
 
-    overall = (pass_rate + magnitude + consistency) / 3
+    overall = 0.6 * magnitude + 0.25 * pass_rate + 0.15 * consistency
     label, color = _label_for_score(overall)
 
-    # Strengths / weaknesses — rank metrics by their average computable value
-    metric_scores = []
+    metric_scores_by_name = []
     for m in metrics:
         vals = [v for v in m.values.values() if v is not None]
         if vals:
-            metric_scores.append((m.label, sum(vals) / len(vals)))
-    metric_scores.sort(key=lambda t: t[1], reverse=True)
-    strengths = [f"{name} avg {avg*100:.0f}%" for name, avg in metric_scores[:2] if avg >= PASS_THRESHOLD]
-    weaknesses = [f"{name} avg {avg*100:.0f}%" for name, avg in metric_scores[-2:][::-1] if avg < PASS_THRESHOLD]
+            metric_scores_by_name.append((m.label, sum(vals) / len(vals)))
+    metric_scores_by_name.sort(key=lambda t: t[1], reverse=True)
+    strengths = [f"{name} avg {avg*100:.0f}%" for name, avg in metric_scores_by_name[:2] if avg >= PASS_THRESHOLD]
+    weaknesses = [f"{name} avg {avg*100:.0f}%" for name, avg in metric_scores_by_name[-2:][::-1] if avg < PASS_THRESHOLD]
 
     return WonderfulnessScore(
         overall=round(overall, 1),
