@@ -59,6 +59,8 @@ class Financials:
     beta: float | None = None
     book_value_per_share: float | None = None
     company_name: str = ""
+    data_source: str = "yfinance"           # "edgar+yfinance" or "yfinance"
+    data_source_note: str = ""              # UI-facing message about data source
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
