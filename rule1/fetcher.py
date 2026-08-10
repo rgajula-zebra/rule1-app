@@ -265,6 +265,77 @@ def fetch(ticker: str) -> Financials:
     if shares_outstanding is None and market_cap and current_price:
         shares_outstanding = market_cap / current_price
 
+    # --- Currency normalization ---
+    # For foreign-listed tickers (e.g. Kaspi.kz / KSPI, some ADRs), Yahoo returns
+    # the statement values in the local currency (KZT) but the quote in USD.
+    # We convert all statement series and per-share amounts into the QUOTE
+    # currency so downstream valuation math is consistent.
+    fin_ccy = None
+    quote_ccy = None
+    fx_rate = None
+    fx_note = ""
+    try:
+        info_ccy = yft.info or {}
+        fin_ccy = (info_ccy.get("financialCurrency") or "").upper() or None
+        quote_ccy = (info_ccy.get("currency") or "").upper() or None
+    except Exception:
+        pass
+
+    if fin_ccy and quote_ccy and fin_ccy != quote_ccy:
+        # Yahoo FX ticker convention: "XXX=X" means "USD per 1 XXX" for major pairs,
+        # BUT for most non-USD pairs "XXX=X" actually returns "XXX per 1 USD".
+        # Handle both by fetching USD-based FX and computing the ratio we need.
+        try:
+            if fin_ccy == "USD" or quote_ccy == "USD":
+                other = quote_ccy if fin_ccy == "USD" else fin_ccy
+                fx_pair = f"{other}=X"  # units of `other` per 1 USD
+                fx_ticker = yf.Ticker(fx_pair, session=_SESSION)
+                hist = fx_ticker.history(period="5d")
+                if not hist.empty:
+                    rate_other_per_usd = float(hist["Close"].iloc[-1])
+                    if fin_ccy == "USD":
+                        # statement in USD, quote in `other` — multiply statement by rate
+                        fx_rate = rate_other_per_usd
+                    else:
+                        # statement in `other`, quote in USD — divide statement by rate
+                        fx_rate = 1.0 / rate_other_per_usd
+                    fx_note = (
+                        f"Statements in {fin_ccy} converted to {quote_ccy} at "
+                        f"1 {fin_ccy} = {fx_rate:.6f} {quote_ccy}."
+                    )
+            else:
+                # Neither side is USD — pivot through USD
+                fx1 = yf.Ticker(f"{fin_ccy}=X", session=_SESSION).history(period="5d")
+                fx2 = yf.Ticker(f"{quote_ccy}=X", session=_SESSION).history(period="5d")
+                if not fx1.empty and not fx2.empty:
+                    fin_per_usd = float(fx1["Close"].iloc[-1])
+                    quote_per_usd = float(fx2["Close"].iloc[-1])
+                    # 1 fin_ccy = (1/fin_per_usd) USD = (quote_per_usd/fin_per_usd) quote_ccy
+                    fx_rate = quote_per_usd / fin_per_usd
+                    fx_note = (
+                        f"Statements in {fin_ccy} converted to {quote_ccy} at "
+                        f"1 {fin_ccy} = {fx_rate:.6f} {quote_ccy}."
+                    )
+        except Exception:
+            fx_rate = None
+
+    if fx_rate is not None:
+        # Apply to every statement series and per-share amount that came from
+        # the statements (i.e. in fin_ccy). Do NOT touch price / market_cap /
+        # dividend_yield / PE / analyst_growth — those come from the quote side.
+        revenue = revenue * fx_rate if not revenue.empty else revenue
+        net_income = net_income * fx_rate if not net_income.empty else net_income
+        eps = eps * fx_rate if not eps.empty else eps
+        equity = equity * fx_rate if not equity.empty else equity
+        ocf = ocf * fx_rate if not ocf.empty else ocf
+        capex = capex * fx_rate if not capex.empty else capex
+        fcf = fcf * fx_rate if not fcf.empty else fcf
+        long_term_debt = long_term_debt * fx_rate if not long_term_debt.empty else long_term_debt
+        ebit = ebit * fx_rate if not ebit.empty else ebit
+        # tax_rate is a ratio, unaffected by currency
+        if book_value_per_share is not None:
+            book_value_per_share = book_value_per_share * fx_rate
+
     return Financials(
         ticker=symbol,
         revenue=revenue,
@@ -287,5 +358,6 @@ def fetch(ticker: str) -> Financials:
         beta=beta,
         book_value_per_share=book_value_per_share,
         company_name=company_name or symbol,
-        raw={"income": income, "balance": balance, "cash": cash},
+        data_source_note=fx_note,  # populated only when a currency conversion happened
+        raw={"income": income, "balance": balance, "cash": cash, "fx_rate": fx_rate, "fin_ccy": fin_ccy, "quote_ccy": quote_ccy},
     )
