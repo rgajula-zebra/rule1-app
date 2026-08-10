@@ -619,7 +619,7 @@ else:
     radio_col, custom_col, button_col = st.columns([7, 2.2, 1.8])
     with radio_col:
         selected_growth_mode = st.radio(
-            "Growth source",
+            "Growth source - try changing to a different growth rate to see how the Sticker Price changes or input a custom growth rate below.",
             options=mode_options,
             index=mode_options.index(st.session_state.get("valuation_growth_mode", "Rule #1 conservative")),
             horizontal=True,
