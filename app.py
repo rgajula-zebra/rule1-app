@@ -29,6 +29,15 @@ def _cached_fetch(symbol: str) -> Financials:
     return fetch(symbol)
 
 
+_COLOR_HEX = {
+    "bargain": "#00E676",
+    "green": "#4CAF50",
+    "orange": "#FFA726",
+    "red": "#EF5350",
+    "gray": "#9AA0A6",
+}
+
+
 def _fmt_pct(v: float | None) -> str:
     if v is None:
         return "n/a"
@@ -103,11 +112,30 @@ def _verdict_price(current: float | None, mos: float | None, sticker: float | No
 
 
 def _big5_eps_growth(big5: Big5Result) -> float | None:
-    """Pick the most conservative computable EPS growth for valuation."""
-    computed = [v for v in big5.eps.values.values() if v is not None]
-    if not computed:
-        return None
-    return min(computed)
+    """Pick a stable EPS growth rate from the Big 5 EPS CAGR windows for valuation.
+
+    Rule: use the **median of the 5yr and 3yr windows** — these capture the
+    business trend without letting a single weak/strong year dominate. The 1yr
+    window is only used as a last resort when longer windows aren't computable
+    (e.g. foreign tickers with 4yrs of yfinance data). The 10yr window is
+    included when it exists to further stabilize.
+
+    Rationale: the "lowest window" rule (Phil Town's discipline) is too brittle
+    for tickers with short history — a single flat year (e.g. KSPI's 1yr = 3%)
+    can suppress the sticker price by 4× vs the 3yr trend of 22%.
+    """
+    windows = big5.eps.values  # {10: v, 5: v, 3: v, 1: v}
+    stable = [v for w, v in windows.items() if w in (5, 3, 10) and v is not None]
+    if stable:
+        stable.sort()
+        n = len(stable)
+        # median (with even-count average)
+        if n % 2:
+            return stable[n // 2]
+        return (stable[n // 2 - 1] + stable[n // 2]) / 2
+    # Fallback: 1yr only when nothing longer is computable
+    one = windows.get(1)
+    return one if one is not None else None
 
 
 st.markdown(
@@ -177,13 +205,15 @@ with st.spinner(f"Fetching 10-year financials for {symbol}..."):
         st.stop()
 
 st.subheader(f"{fin.company_name} ({fin.ticker})")
-top1, top2, top3, top4, top5, top6 = st.columns(6)
+_eps_ttm = float(fin.eps.iloc[-1]) if not fin.eps.empty else None
+top1, top2, top3, top4, top5, top6, top7 = st.columns(7)
 top1.metric("Current Price", _fmt_money(fin.current_price))
 top2.metric("Market Cap", _fmt_money(fin.market_cap))
-top3.metric("TTM P/E", f"{fin.pe_ratio_ttm:.1f}" if fin.pe_ratio_ttm else "n/a")
-top4.metric("Div Yield", _fmt_pct(fin.dividend_yield))
-top5.metric("BVPS", _fmt_money(fin.book_value_per_share))
-top6.metric("Years of data", str(fin.years_available))
+top3.metric("EPS (TTM)", _fmt_money(_eps_ttm))
+top4.metric("TTM P/E", f"{fin.pe_ratio_ttm:.1f}" if fin.pe_ratio_ttm else "n/a")
+top5.metric("Div Yield", _fmt_pct(fin.dividend_yield))
+top6.metric("BVPS", _fmt_money(fin.book_value_per_share))
+top7.metric("Years of data", str(fin.years_available))
 
 # Data-source note is shown in the footer only — not up top. Split-artifact
 # flag is precomputed here and rendered alongside the footer note.
@@ -206,20 +236,91 @@ st.caption(
 st.caption("Note: ROIC is shown as a period-average return, not a CAGR.")
 _render_big5_table(big5)
 
-overall_ok = big5.all_pass()
-if overall_ok:
-    st.success("All Big 5 pass in every available window. This is a Rule #1 candidate.")
-else:
-    failing = [
-        m.label
-        for m in (big5.roic, big5.sales, big5.eps, big5.equity, big5.fcf)
-        if not m.passes
-    ]
-    st.warning("Failing the Big 5: " + ", ".join(failing))
+# --- Wonderfulness hero banner ---
+_ws = big5.wonderfulness()
+_ws_color_hex = _COLOR_HEX[_ws.color]
+# Score is 0-10; render a horizontal fill proportional to it.
+_bar_pct = int(round(_ws.overall * 10))
+_strength_html = " · ".join(f"<span style='color:#b6f0b6'>{s}</span>" for s in _ws.strengths) if _ws.strengths else "<span style='color:#9aa0a6'>—</span>"
+_weakness_html = " · ".join(f"<span style='color:#f0b6b6'>{s}</span>" for s in _ws.weaknesses) if _ws.weaknesses else "<span style='color:#9aa0a6'>—</span>"
+
+st.markdown(
+    f"""
+    <div style="border-radius: 10px; padding: 1.25rem 1.5rem; margin: 0.75rem 0 1rem;
+                background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0.06));
+                border: 1px solid rgba(255,255,255,0.08);">
+        <div style="font-size: 0.85rem; color: #9aa0a6; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.4rem;">
+            How wonderful is the company:
+        </div>
+        <div style="display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;">
+            <div style="font-size: 3.5rem; font-weight: 700; line-height: 1; color: {_ws_color_hex};">
+                {_ws.overall:.1f}<span style="font-size: 1.5rem; color: #9aa0a6; font-weight: 400;">/10</span>
+            </div>
+            <div style="flex: 1;">
+                <div style="font-size: 1.5rem; font-weight: 600; color: {_ws_color_hex};">{_ws.label}</div>
+                <div style="font-size: 0.85rem; color: #9aa0a6; margin-top: 0.15rem;">
+                    {_ws.checks_passed}/{_ws.checks_total} checks pass the 10% bar
+                </div>
+            </div>
+        </div>
+        <div style="height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; margin: 0.75rem 0 0.9rem; overflow: hidden;">
+            <div style="height: 100%; width: {_bar_pct}%; background: {_ws_color_hex}; border-radius: 4px;"></div>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; font-size: 0.85rem;">
+            <div>
+                <div style="color:#9aa0a6; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;">Pass Rate</div>
+                <div style="font-size: 1.25rem; color: {_ws_color_hex};">{_ws.pass_rate:.1f}/10</div>
+                <div style="color:#9aa0a6; font-size: 0.7rem;">How many checks beat 10%</div>
+            </div>
+            <div>
+                <div style="color:#9aa0a6; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;">Magnitude</div>
+                <div style="font-size: 1.25rem; color: {_ws_color_hex};">{_ws.magnitude:.1f}/10</div>
+                <div style="color:#9aa0a6; font-size: 0.7rem;">How far above 10% they sit</div>
+            </div>
+            <div>
+                <div style="color:#9aa0a6; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;">Consistency</div>
+                <div style="font-size: 1.25rem; color: {_ws_color_hex};">{_ws.consistency:.1f}/10</div>
+                <div style="color:#9aa0a6; font-size: 0.7rem;">How stable across windows</div>
+            </div>
+        </div>
+        <div style="margin-top: 0.9rem; font-size: 0.8rem; color: #c5c8cd;">
+            <div><strong style="color:#4CAF50;">Strengths:</strong> {_strength_html}</div>
+            <div style="margin-top: 0.2rem;"><strong style="color:#EF5350;">Weaknesses:</strong> {_weakness_html}</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.markdown("### Valuation")
 
-current_eps = float(fin.eps.iloc[-1]) if not fin.eps.empty else None
+# --- EPS selection: prefer latest year, but fall back to a 3yr positive-EPS
+# average when the latest year is negative (Sticker Price and other formulas
+# can't handle negative earnings). This surfaces to the user as an amber note.
+_eps_ttm_raw = float(fin.eps.iloc[-1]) if not fin.eps.empty else None
+_normalized_eps = None
+_normalized_years: list[int] = []
+if _eps_ttm_raw is not None and _eps_ttm_raw <= 0 and not fin.eps.empty:
+    positive_history = fin.eps[fin.eps > 0]
+    if not positive_history.empty:
+        # Take the 3 most recent positive years (or fewer if less available).
+        recent_pos = positive_history.tail(3)
+        _normalized_eps = float(recent_pos.mean())
+        _normalized_years = [int(y) for y in recent_pos.index]
+
+current_eps = _normalized_eps if _normalized_eps is not None else _eps_ttm_raw
+
+if _normalized_eps is not None:
+    yrs_txt = ", ".join(str(y) for y in _normalized_years)
+    st.warning(
+        f":warning: Latest reported EPS is negative (${_eps_ttm_raw:.2f}). "
+        f"Sticker Price and other formulas need positive EPS to work — the app "
+        f"has substituted a **normalized EPS of ${_normalized_eps:.2f}**, computed as the "
+        f"average of the last {len(_normalized_years)} positive years ({yrs_txt}). "
+        f"Treat these valuations as guidance about what this business *could* be worth "
+        f"if it returns to prior profitability, not what it's worth today."
+    )
+
 big5_eps_g = _big5_eps_growth(big5)
 val = sticker_price(
     current_eps=current_eps,
@@ -227,15 +328,6 @@ val = sticker_price(
     analyst_growth=fin.analyst_5yr_growth,
     historical_pe=fin.pe_ratio_ttm,
 )
-
-_COLOR_HEX = {
-    "bargain": "#00E676",
-    "green": "#4CAF50",
-    "orange": "#FFA726",
-    "red": "#EF5350",
-    "gray": "#9AA0A6",
-}
-
 
 _VERDICT_TOOLTIPS = {
     "BARGAIN BUY": (
@@ -296,6 +388,58 @@ _VERDICT_TOOLTIP_SECTION = (
 )
 
 
+_ANALYST_STYLE = {
+    # yfinance recommendationKey -> (display, color)
+    "strong_buy":  ("STRONG BUY",  "bargain"),
+    "buy":         ("BUY",         "green"),
+    "outperform":  ("BUY",         "green"),   # legacy label some tickers still use
+    "hold":        ("HOLD",        "orange"),
+    "underperform":("SELL",        "red"),
+    "sell":        ("SELL",        "red"),
+    "strong_sell": ("STRONG SELL", "red"),
+}
+
+
+def _render_analyst_cell(col, fin) -> None:
+    """Analyst consensus rating from yfinance, with count and price target upside."""
+    key = fin.analyst_rec_key
+    count = fin.analyst_count
+    label, color = _ANALYST_STYLE.get(key or "", (None, "gray"))
+
+    if label is None or not count:
+        col.markdown(
+            """
+            <div style="color: rgba(250,250,250,0.6); font-size: 0.875rem;">Analyst Rating</div>
+            <div style="font-size: 1.5rem; color: #9AA0A6;">n/a</div>
+            <div style="font-size: 0.72rem; color: #9aa0a6;">no analyst coverage</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    color_hex = _COLOR_HEX[color]
+    # Detail: N analysts, plus price target upside vs current if available.
+    detail_parts = [f"{count} analyst{'s' if count != 1 else ''}"]
+    if fin.analyst_target_mean and fin.current_price and fin.current_price > 0:
+        tgt = fin.analyst_target_mean
+        upside = (tgt - fin.current_price) / fin.current_price * 100
+        detail_parts.append(f"target ${tgt:.0f} ({upside:+.0f}%)")
+    detail = " · ".join(detail_parts)
+
+    col.markdown(
+        f"""
+        <div style="color: rgba(250,250,250,0.6); font-size: 0.875rem;">Analyst Rating</div>
+        <div style="font-size: 2.0rem; font-weight: 400; line-height: 1.2; color: {color_hex};">
+            {label}
+        </div>
+        <div style="font-size: 0.72rem; color: #9aa0a6; line-height: 1.3; margin-top: 0.2rem;">
+            {detail}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_verdict_cell(col, verdict: str, detail: str, color: str) -> None:
     # &#9432; is the ⓘ (info) glyph. HTML `title` gives us a native browser tooltip
     # on hover — works on all platforms without needing any Streamlit component.
@@ -324,13 +468,13 @@ if val is None:
         "growth estimate (Big 5 EPS growth or analyst 5yr growth)."
     )
 else:
-    st.markdown("**Phil Town Sticker Price (Rule #1)**")
     v_verdict, v_detail, v_color = _verdict_price(fin.current_price, val.mos_price, val.sticker_price)
-    v1, v2, v3, v4 = st.columns(4)
+    v1, v2, v3, v4, v5 = st.columns(5)
     v1.metric("Sticker Price aka Intrinsic Value", _fmt_money(val.sticker_price))
     v2.metric("Margin of Safety (MOS) Buy Price", _fmt_money(val.mos_price))
     v3.metric("Current Price", _fmt_money(fin.current_price))
     _render_verdict_cell(v4, v_verdict, v_detail, v_color)
+    _render_analyst_cell(v5, fin)
 
     with st.expander("How the Sticker Price was calculated"):
         _big5_g_txt = _fmt_pct(big5_eps_g)
@@ -342,7 +486,7 @@ else:
         st.markdown(
             f"""
 **Step 1 — Pick the growth rate (the lower of two, capped at 15%)**
-- Big 5 lowest EPS growth: **{_big5_g_txt}**
+- Big 5 EPS growth (median of 5yr/3yr): **{_big5_g_txt}**
 - Analyst 5yr growth: **{_analyst_g_txt}**
 - Chosen: **{_fmt_pct(val.growth_rate)}** *(source: {val.growth_source}, capped at 15%)*
 
@@ -368,58 +512,6 @@ else:
 **Step 6 — Apply {_mos_pct_int}% Margin of Safety**
 - Sticker × {1 - _mos_pct_int/100:.2f}
 - = **{_fmt_money(val.mos_price)}**  ← *MOS Buy Price*
-""".strip()
-        )
-
-# --- Peter Lynch Fair Value (elevated to the main Valuation section) ---
-_growth_for_lynch = big5_eps_g if big5_eps_g is not None else fin.analyst_5yr_growth
-lynch = peter_lynch_fair(
-    current_eps=current_eps,
-    growth_rate=_growth_for_lynch,
-    dividend_yield=fin.dividend_yield,
-    current_price=fin.current_price,
-    mos=mos_pct,
-)
-
-st.markdown("**Peter Lynch Fair Value**")
-if lynch is None:
-    st.info(
-        "Cannot compute Peter Lynch Fair Value — need positive current EPS and a "
-        "positive growth estimate."
-    )
-else:
-    l_verdict, l_detail, l_color = _verdict_price(
-        fin.current_price, lynch.mos_price, lynch.fair_value
-    )
-    l1, l2, l3, l4 = st.columns(4)
-    l1.metric("Fair Value", _fmt_money(lynch.fair_value))
-    l2.metric(f"MOS Buy Price ({int(mos_pct*100)}% off)", _fmt_money(lynch.mos_price))
-    l3.metric("Current Price", _fmt_money(fin.current_price))
-    _render_verdict_cell(l4, l_verdict, l_detail, l_color)
-
-    with st.expander("How the Peter Lynch Fair Value was calculated"):
-        _g_pct = lynch.assumptions["growth_rate"] * 100
-        _d_pct = lynch.assumptions["dividend_yield"] * 100
-        _fair_pe = lynch.assumptions["fair_pe_used"]
-        _sum_uncapped = _g_pct + _d_pct
-        _cap_note = "" if _sum_uncapped <= 30 else " (capped at 30 — Lynch was skeptical of anything higher)"
-        st.markdown(
-            f"""
-**Step 1 — Fair PE = growth rate (%) + dividend yield (%)**
-- Growth rate: **{_g_pct:.1f}%** *(the Big 5 lowest EPS growth, or analyst 5yr if Big 5 unavailable)*
-- Dividend yield: **{_d_pct:.2f}%**
-- Sum: {_g_pct:.1f} + {_d_pct:.2f} = **{_sum_uncapped:.2f}**
-- Fair PE used: **{_fair_pe:.2f}**{_cap_note}
-
-**Step 2 — Fair Value = Current EPS × Fair PE**
-- {lynch.assumptions["current_eps"]:.2f} × {_fair_pe:.2f}
-- = **{_fmt_money(lynch.fair_value)}**  ← *Peter Lynch Fair Value*
-
-**Step 3 — Apply {int(mos_pct*100)}% Margin of Safety** *(set by sidebar slider)*
-- Fair Value × {1 - mos_pct:.2f}
-- = **{_fmt_money(lynch.mos_price)}**  ← *MOS Buy Price*
-
-_Lynch's rule of thumb: PEG < 1 = cheap for its growth, PEG > 2 = overpriced._
 """.strip()
         )
 
@@ -458,8 +550,15 @@ _add(
         terminal_growth=dcf_terminal,
     )
 )
-# Peter Lynch Fair Value is now shown in the main Valuation section above,
-# so we don't repeat it in this comparison table.
+_add(
+    peter_lynch_fair(
+        current_eps=current_eps,
+        growth_rate=_growth_for_intrinsic,
+        dividend_yield=fin.dividend_yield,
+        current_price=fin.current_price,
+        mos=mos_pct,
+    )
+)
 _add(
     graham_number(
         current_eps=current_eps,
