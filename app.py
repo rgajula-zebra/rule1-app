@@ -159,12 +159,26 @@ top4.metric("Div Yield", _fmt_pct(fin.dividend_yield))
 top5.metric("BVPS", _fmt_money(fin.book_value_per_share))
 top6.metric("Years of data", str(fin.years_available))
 
-if fin.years_available < 10:
-    st.warning(
-        f"Only {fin.years_available} years of annual data returned by Yahoo Finance. "
-        "10-year metrics will show 'n/a' — 5/3/1-year windows are still valid where "
-        "history allows. For the true Rule #1 10-year view, cross-check with 10-K filings."
-    )
+# Data-source banner. EDGAR path is green (10+ yrs), yfinance-only is amber.
+if fin.data_source == "edgar+yfinance":
+    st.success(fin.data_source_note)
+elif fin.data_source == "edgar":
+    st.info(fin.data_source_note)
+elif fin.data_source_note:
+    st.warning(fin.data_source_note)
+
+# EDGAR EPS is NOT split-adjusted (values are as-reported in each original 10-K),
+# which can create phantom "collapses" in EPS growth around stock split years.
+# Flag this to prevent the user from misreading the Big 5 EPS column.
+if fin.data_source.startswith("edgar") and not fin.eps.empty and len(fin.eps) >= 3:
+    ratios = fin.eps.diff() / fin.eps.shift(1).abs()
+    if (ratios.abs() > 0.5).any():
+        st.caption(
+            ":warning: EDGAR reports EPS as-filed (not split-adjusted). "
+            "Large year-over-year EPS jumps may reflect a stock split rather than "
+            "actual earnings change. Cross-check with a split-adjusted source before "
+            "acting on the EPS growth number."
+        )
 
 big5 = compute_big5(fin)
 
