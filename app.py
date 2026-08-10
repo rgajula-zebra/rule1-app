@@ -342,12 +342,62 @@ if _normalized_eps is not None:
     )
 
 big5_eps_g = _big5_eps_growth(big5)
-val = sticker_price(
-    current_eps=current_eps,
-    big5_eps_growth=big5_eps_g,
-    analyst_growth=fin.analyst_5yr_growth,
-    historical_pe=fin.pe_ratio_ttm,
-)
+
+with st.container():
+    st.caption("Choose the growth rate(s) to use for sticker-price valuation.")
+    col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2.2])
+    with col_g1:
+        use_big5_growth = st.checkbox("Big 5 EPS growth", value=True, key="use_big5_growth")
+    with col_g2:
+        use_analyst_growth = st.checkbox("Analyst 5Y growth", value=True, key="use_analyst_growth")
+    with col_g3:
+        revalue_button = st.button("Re-evaluate", use_container_width=True)
+
+    if big5_eps_g is not None:
+        st.caption(f"Big 5 EPS growth available: {_fmt_pct(big5_eps_g)}")
+    if fin.analyst_5yr_growth is not None:
+        st.caption(f"Analyst 5Y growth available: {_fmt_pct(fin.analyst_5yr_growth)}")
+
+    if revalue_button or "valuation_growth_choice" not in st.session_state:
+        selected_growth = []
+        if use_big5_growth and big5_eps_g is not None:
+            selected_growth.append(("Big 5 EPS", big5_eps_g))
+        if use_analyst_growth and fin.analyst_5yr_growth is not None:
+            selected_growth.append(("Analyst 5Y", fin.analyst_5yr_growth))
+
+        st.session_state["valuation_growth_choice"] = selected_growth
+
+        if not selected_growth:
+            val = None
+            st.warning("Select at least one growth source to compute the sticker price.")
+        else:
+            val = sticker_price(
+                current_eps=current_eps,
+                big5_eps_growth=big5_eps_g if use_big5_growth else None,
+                analyst_growth=fin.analyst_5yr_growth if use_analyst_growth else None,
+                historical_pe=fin.pe_ratio_ttm,
+            )
+            if val is not None:
+                st.caption(
+                    f"Growth used for valuation: {_fmt_pct(val.growth_rate)} "
+                    f"({val.growth_source})"
+                )
+    else:
+        selected_growth = st.session_state.get("valuation_growth_choice", [])
+        if not selected_growth:
+            val = None
+        else:
+            val = sticker_price(
+                current_eps=current_eps,
+                big5_eps_growth=big5_eps_g if use_big5_growth else None,
+                analyst_growth=fin.analyst_5yr_growth if use_analyst_growth else None,
+                historical_pe=fin.pe_ratio_ttm,
+            )
+            if val is not None:
+                st.caption(
+                    f"Growth used for valuation: {_fmt_pct(val.growth_rate)} "
+                    f"({val.growth_source})"
+                )
 
 _VERDICT_TOOLTIPS = {
     "BARGAIN BUY": (
