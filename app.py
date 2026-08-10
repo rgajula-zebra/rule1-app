@@ -21,7 +21,7 @@ from rule1.big5 import WINDOWS, PASS_THRESHOLD
 from rule1.fetcher import FetchError
 from rule1.intrinsic import MethodResult
 
-st.set_page_config(page_title="Rule #1 Investor", page_icon=None, layout="wide")
+st.set_page_config(page_title="Value Investing", page_icon=None, layout="wide")
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -96,9 +96,21 @@ def _big5_eps_growth(big5: Big5Result) -> float | None:
     return min(computed)
 
 
-st.title("Rule #1 Investor")
+st.markdown(
+    """
+    <div style="margin-bottom: 0.5rem;">
+        <div style="font-size: 2.75rem; font-weight: 700; line-height: 1.1;">
+            Value Investing
+        </div>
+        <div style="font-size: 0.85rem; color: #9aa0a6; margin-top: 0.15rem;">
+            inspired by Rule #1 Investing by Phil Town
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 st.caption(
-    "Phil Town-style value screening plus DCF, Peter Lynch Fair Value, Graham Number, "
+    "Big 5 growth screening plus DCF, Peter Lynch Fair Value, Graham Number, "
     "Graham Formula, and PEG. Enter a ticker to compute all methods side-by-side."
 )
 
