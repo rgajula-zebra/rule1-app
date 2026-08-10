@@ -173,17 +173,17 @@ with st.sidebar:
     st.header("Valuation knobs")
     dcf_discount = st.slider(
         "DCF discount rate",
-        min_value=6,
-        max_value=15,
-        value=10,
+        min_value=6.0,
+        max_value=15.0,
+        value=10.0,
         step=0.5,
-        format="%f%%",
+        format="%.1f%%",
         help="Required annual return. 10% = long-run S&P 500 average; 15% = Phil Town's aggressive rate.",
     ) / 100
     dcf_terminal = st.slider(
         "DCF terminal growth",
-        min_value=0,
-        max_value=4,
+        min_value=0.0,
+        max_value=4.0,
         value=2.5,
         step=0.5,
         format="%f%%",
@@ -191,20 +191,20 @@ with st.sidebar:
     ) / 100
     aaa_yield = st.slider(
         "AAA corporate bond yield (for Graham Formula)",
-        min_value=2,
-        max_value=10,
+        min_value=2.0,
+        max_value=10.0,
         value=4.5,
         step=0.5,
-        format="%f%%",
+        format="%.1f%%",
         help="Current AAA corporate bond yield. Used in Graham's revised 1974 formula.",
     ) / 100
     mos_pct = st.slider(
         "Margin of Safety (Lynch/Graham/PEG)",
-        min_value=10,
-        max_value=60,
-        value=25,
-        step=5,
-        format="%f%%",
+        min_value=10.0,
+        max_value=60.0,
+        value=25.0,
+        step=5.0,
+        format="%.1f%%",
         help="Discount applied to fair value to get a buy price. Phil Town's sticker uses a fixed 50%.",
     ) / 100
 
@@ -233,6 +233,11 @@ if submitted:
     st.session_state["last_ticker"] = ticker
 
 symbol = st.session_state.get("last_ticker", ticker)
+
+if "valuation_ticker" not in st.session_state or st.session_state["valuation_ticker"] != symbol:
+    st.session_state["valuation_ticker"] = symbol
+    st.session_state["valuation_growth_mode"] = "Rule #1 conservative"
+    st.session_state["valuation_growth_result"] = None
 
 with st.spinner(f"Fetching 10-year financials for {symbol}..."):
     try:
@@ -363,61 +368,90 @@ if _normalized_eps is not None:
 
 big5_eps_g = _big5_eps_growth(big5)
 
-with st.container():
-    st.caption("Choose the growth rate(s) to use for sticker-price valuation.")
-    col_g1, col_g2, col_g3 = st.columns([1.5, 1.5, 2.2])
-    with col_g1:
-        use_big5_growth = st.checkbox("Big 5 EPS growth", value=True, key="use_big5_growth")
-    with col_g2:
-        use_analyst_growth = st.checkbox("Analyst 5Y growth", value=True, key="use_analyst_growth")
-    with col_g3:
-        revalue_button = st.button("Re-evaluate", use_container_width=True)
+def _rule1_conservative_growth() -> float | None:
+    candidates = [g for g in (big5_eps_g, fin.analyst_5yr_growth) if g is not None and g > 0]
+    if not candidates:
+        return None
+    growth = min(candidates)
+    return min(growth, 0.15)
 
+
+def _valuation_growth_rate_label(mode: str) -> str:
+    if mode == "Rule #1 conservative":
+        rate = _rule1_conservative_growth()
+        return f"Rule #1 conservative - {_fmt_pct(rate) if rate is not None else 'n/a'}"
+    if mode == "Big 5 EPS growth":
+        return f"Big 5 EPS growth - {_fmt_pct(big5_eps_g) if big5_eps_g is not None else 'n/a'}"
+    if mode == "Analyst 5Y growth":
+        return f"Analyst 5Y growth - {_fmt_pct(fin.analyst_5yr_growth) if fin.analyst_5yr_growth is not None else 'n/a'}"
+    return mode
+
+
+def _valuation_growth_mode_options() -> list[str]:
+    options = ["Rule #1 conservative"]
     if big5_eps_g is not None:
-        st.caption(f"Big 5 EPS growth available: {_fmt_pct(big5_eps_g)}")
+        options.append("Big 5 EPS growth")
     if fin.analyst_5yr_growth is not None:
-        st.caption(f"Analyst 5Y growth available: {_fmt_pct(fin.analyst_5yr_growth)}")
+        options.append("Analyst 5Y growth")
+    return options
 
-    if revalue_button or "valuation_growth_choice" not in st.session_state:
-        selected_growth = []
-        if use_big5_growth and big5_eps_g is not None:
-            selected_growth.append(("Big 5 EPS", big5_eps_g))
-        if use_analyst_growth and fin.analyst_5yr_growth is not None:
-            selected_growth.append(("Analyst 5Y", fin.analyst_5yr_growth))
+mode_options = _valuation_growth_mode_options()
+if "valuation_growth_mode" not in st.session_state or st.session_state["valuation_growth_mode"] not in mode_options:
+    st.session_state["valuation_growth_mode"] = "Rule #1 conservative"
+selected_growth_mode = st.session_state["valuation_growth_mode"]
 
-        st.session_state["valuation_growth_choice"] = selected_growth
+if "custom_growth_rate" not in st.session_state:
+    st.session_state["custom_growth_rate"] = 0
 
-        if not selected_growth:
-            val = None
-            st.warning("Select at least one growth source to compute the sticker price.")
-        else:
-            val = sticker_price(
-                current_eps=current_eps,
-                big5_eps_growth=big5_eps_g if use_big5_growth else None,
-                analyst_growth=fin.analyst_5yr_growth if use_analyst_growth else None,
-                historical_pe=fin.pe_ratio_ttm,
-            )
-            if val is not None:
-                st.caption(
-                    f"Growth used for valuation: {_fmt_pct(val.growth_rate)} "
-                    f"({val.growth_source})"
-                )
-    else:
-        selected_growth = st.session_state.get("valuation_growth_choice", [])
-        if not selected_growth:
-            val = None
-        else:
-            val = sticker_price(
-                current_eps=current_eps,
-                big5_eps_growth=big5_eps_g if use_big5_growth else None,
-                analyst_growth=fin.analyst_5yr_growth if use_analyst_growth else None,
-                historical_pe=fin.pe_ratio_ttm,
-            )
-            if val is not None:
-                st.caption(
-                    f"Growth used for valuation: {_fmt_pct(val.growth_rate)} "
-                    f"({val.growth_source})"
-                )
+
+def _compute_valuation_value(mode: str):
+    custom_growth_pct = float(st.session_state.get("custom_growth_rate", 0) or 0)
+    custom_growth = custom_growth_pct / 100.0 if custom_growth_pct > 0 else 0.0
+
+    if custom_growth > 0:
+        return sticker_price(
+            current_eps=current_eps,
+            big5_eps_growth=custom_growth,
+            analyst_growth=custom_growth,
+            historical_pe=fin.pe_ratio_ttm,
+        )
+
+    if mode == "Rule #1 conservative":
+        use_big5_growth = big5_eps_g is not None
+        use_analyst_growth = fin.analyst_5yr_growth is not None
+        if not (use_big5_growth or use_analyst_growth):
+            return None
+        return sticker_price(
+            current_eps=current_eps,
+            big5_eps_growth=big5_eps_g if use_big5_growth else None,
+            analyst_growth=fin.analyst_5yr_growth if use_analyst_growth else None,
+            historical_pe=fin.pe_ratio_ttm,
+        )
+
+    if mode == "Big 5 EPS growth":
+        if big5_eps_g is None:
+            return None
+        return sticker_price(
+            current_eps=current_eps,
+            big5_eps_growth=big5_eps_g,
+            analyst_growth=None,
+            historical_pe=fin.pe_ratio_ttm,
+        )
+
+    if fin.analyst_5yr_growth is None:
+        return None
+    return sticker_price(
+        current_eps=current_eps,
+        big5_eps_growth=None,
+        analyst_growth=fin.analyst_5yr_growth,
+        historical_pe=fin.pe_ratio_ttm,
+    )
+
+
+# The valuation result is intentionally recomputed from the current selected
+# growth source only after the user presses RE-VALUATE. A stale cached result
+# would otherwise keep showing the old sticker price even after the radio
+# selection changes.
 
 _VERDICT_TOOLTIPS = {
     "BARGAIN BUY": (
@@ -552,6 +586,22 @@ def _render_verdict_cell(col, verdict: str, detail: str, color: str) -> None:
     )
 
 
+if "valuation_growth_result" not in st.session_state:
+    st.session_state["valuation_growth_result"] = None
+
+if "custom_growth_rate" not in st.session_state:
+    st.session_state["custom_growth_rate"] = 0
+
+# Custom growth rate is stored as a whole-number percentage for UI simplicity,
+# but the valuation model expects a decimal fraction (e.g. 15 => 0.15).
+if isinstance(st.session_state["custom_growth_rate"], float):
+    st.session_state["custom_growth_rate"] = int(round(st.session_state["custom_growth_rate"] * 100))
+
+val = st.session_state.get("valuation_growth_result")
+if val is None:
+    val = _compute_valuation_value(selected_growth_mode)
+    st.session_state["valuation_growth_result"] = val
+
 if val is None:
     st.info(
         "Cannot compute Sticker Price — need positive current EPS and at least one "
@@ -565,6 +615,36 @@ else:
     v3.metric("Current Price", _fmt_money(fin.current_price))
     _render_verdict_cell(v4, v_verdict, v_detail, v_color)
     _render_analyst_cell(v5, fin)
+
+    radio_col, custom_col, button_col = st.columns([7, 2.2, 1.8])
+    with radio_col:
+        selected_growth_mode = st.radio(
+            "Growth source",
+            options=mode_options,
+            index=mode_options.index(st.session_state.get("valuation_growth_mode", "Rule #1 conservative")),
+            horizontal=True,
+            format_func=_valuation_growth_rate_label,
+            key="valuation_growth_mode",
+        )
+    with custom_col:
+        st.markdown("<div style='height: 1.9rem;'></div>", unsafe_allow_html=True)
+        st.number_input(
+            "Custom growth %",
+            key="custom_growth_rate",
+            min_value=0,
+            max_value=100,
+            value=int(st.session_state["custom_growth_rate"] or 0),
+            step=1,
+            format="%d",
+            help="Optional override in whole percentage points. Enter 1–100 to force that custom growth rate.",
+        )
+    with button_col:
+        st.markdown("<div style='height: 1.9rem;'></div>", unsafe_allow_html=True)
+        revalue_button = st.button("RE-VALUATE", use_container_width=True)
+
+    if revalue_button:
+        st.session_state["valuation_growth_result"] = _compute_valuation_value(selected_growth_mode)
+        st.rerun()
 
     with st.expander("How the Sticker Price was calculated"):
         _big5_g_txt = _fmt_pct(big5_eps_g)
