@@ -58,6 +58,12 @@ class Financials:
     dividend_yield: float | None = None
     beta: float | None = None
     book_value_per_share: float | None = None
+    analyst_rec_key: str | None = None          # "strong_buy" / "buy" / "hold" / "sell" / "strong_sell"
+    analyst_rec_mean: float | None = None       # 1.0 (strong buy) to 5.0 (strong sell)
+    analyst_count: int | None = None
+    analyst_target_mean: float | None = None
+    analyst_target_high: float | None = None
+    analyst_target_low: float | None = None
     company_name: str = ""
     data_source: str = "yfinance"           # "edgar+yfinance" or "yfinance"
     data_source_note: str = ""              # UI-facing message about data source
@@ -226,6 +232,12 @@ def fetch(ticker: str) -> Financials:
     dividend_yield = None
     beta = None
     book_value_per_share = None
+    analyst_rec_key = None
+    analyst_rec_mean = None
+    analyst_count = None
+    analyst_target_mean = None
+    analyst_target_high = None
+    analyst_target_low = None
     try:
         info = yft.info or {}
         company_name = info.get("longName") or info.get("shortName") or symbol
@@ -257,6 +269,19 @@ def fetch(ticker: str) -> Financials:
         bvps = info.get("bookValue")
         if bvps is not None:
             book_value_per_share = float(bvps)
+        # Analyst rating snapshot
+        rec_key = info.get("recommendationKey")
+        rec_mean = info.get("recommendationMean")
+        num_ops = info.get("numberOfAnalystOpinions")
+        tgt_mean = info.get("targetMeanPrice")
+        tgt_high = info.get("targetHighPrice")
+        tgt_low = info.get("targetLowPrice")
+        analyst_rec_key = rec_key if isinstance(rec_key, str) and rec_key != "none" else None
+        analyst_rec_mean = float(rec_mean) if rec_mean is not None else None
+        analyst_count = int(num_ops) if num_ops is not None else None
+        analyst_target_mean = float(tgt_mean) if tgt_mean is not None else None
+        analyst_target_high = float(tgt_high) if tgt_high is not None else None
+        analyst_target_low = float(tgt_low) if tgt_low is not None else None
     except Exception:
         if not company_name:
             company_name = symbol
@@ -357,6 +382,12 @@ def fetch(ticker: str) -> Financials:
         dividend_yield=dividend_yield,
         beta=beta,
         book_value_per_share=book_value_per_share,
+        analyst_rec_key=analyst_rec_key,
+        analyst_rec_mean=analyst_rec_mean,
+        analyst_count=analyst_count,
+        analyst_target_mean=analyst_target_mean,
+        analyst_target_high=analyst_target_high,
+        analyst_target_low=analyst_target_low,
         company_name=company_name or symbol,
         data_source_note=fx_note,  # populated only when a currency conversion happened
         raw={"income": income, "balance": balance, "cash": cash, "fx_rate": fx_rate, "fin_ccy": fin_ccy, "quote_ccy": quote_ccy},
