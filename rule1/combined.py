@@ -103,4 +103,7 @@ def fetch(ticker: str) -> Financials:
         f"SEC EDGAR unavailable — {reason}. "
         f"10-year Big 5 windows may show 'n/a' where history is short."
     )
+    # Preserve any FX-conversion note the yfinance fetcher already set.
+    if snapshot.data_source_note:
+        note = f"{snapshot.data_source_note} {note}"
     return replace(snapshot, data_source="yfinance", data_source_note=note)
