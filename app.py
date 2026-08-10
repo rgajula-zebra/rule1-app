@@ -172,21 +172,41 @@ st.caption(
 with st.sidebar:
     st.header("Valuation knobs")
     dcf_discount = st.slider(
-        "DCF discount rate", 0.06, 0.15, 0.10, 0.005,
+        "DCF discount rate",
+        min_value=6,
+        max_value=15,
+        value=10,
+        step=0.5,
+        format="%f%%",
         help="Required annual return. 10% = long-run S&P 500 average; 15% = Phil Town's aggressive rate.",
-    )
+    ) / 100
     dcf_terminal = st.slider(
-        "DCF terminal growth", 0.00, 0.04, 0.025, 0.005,
+        "DCF terminal growth",
+        min_value=0,
+        max_value=4,
+        value=2.5,
+        step=0.5,
+        format="%f%%",
         help="Perpetual growth rate after the fade period. Should be <= long-run GDP growth (~2.5-3%).",
-    )
+    ) / 100
     aaa_yield = st.slider(
-        "AAA corporate bond yield (for Graham Formula)", 0.02, 0.10, 0.045, 0.005,
+        "AAA corporate bond yield (for Graham Formula)",
+        min_value=2,
+        max_value=10,
+        value=4.5,
+        step=0.5,
+        format="%f%%",
         help="Current AAA corporate bond yield. Used in Graham's revised 1974 formula.",
-    )
+    ) / 100
     mos_pct = st.slider(
-        "Margin of Safety (Lynch/Graham/PEG)", 0.10, 0.60, 0.25, 0.05,
+        "Margin of Safety (Lynch/Graham/PEG)",
+        min_value=10,
+        max_value=60,
+        value=25,
+        step=5,
+        format="%f%%",
         help="Discount applied to fair value to get a buy price. Phil Town's sticker uses a fixed 50%.",
-    )
+    ) / 100
 
 with st.form("analyze"):
     col_a, col_b, col_c = st.columns([2, 1, 5])
