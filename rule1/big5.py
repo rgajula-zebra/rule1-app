@@ -108,10 +108,10 @@ def _bvps(fin: Financials) -> pd.Series:
 def compute_big5(fin: Financials) -> Big5Result:
     roic_series = _roic_per_year(fin)
     return Big5Result(
-        roic=_metric_from_average("ROIC", roic_series),
-        sales=_metric_from_cagr("Sales", fin.revenue),
-        eps=_metric_from_cagr("EPS", fin.eps),
-        equity=_metric_from_cagr("Equity (BVPS)", _bvps(fin)),
-        fcf=_metric_from_cagr("Free Cash Flow", fin.free_cash_flow),
+        roic=_metric_from_average("ROIC growth rate", roic_series),
+        sales=_metric_from_cagr("Sales growth rate", fin.revenue),
+        eps=_metric_from_cagr("EPS growth rate", fin.eps),
+        equity=_metric_from_cagr("Equity (BVPS) growth rate", _bvps(fin)),
+        fcf=_metric_from_cagr("Free Cash Flow growth rate", fin.free_cash_flow),
         roic_by_year=roic_series,
     )
