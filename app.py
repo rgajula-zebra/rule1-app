@@ -37,6 +37,19 @@ _COLOR_HEX = {
     "gray": "#9AA0A6",
 }
 
+# Common / likely ticker typos that should be corrected before fetching.
+_COMMON_TICKER_FIXES = {
+    "APPL": "AAPL",
+    "GOOL": "GOOG",
+    "MSFTT": "MSFT",
+    "AMZNN": "AMZN",
+}
+
+
+def _suggest_ticker(symbol: str) -> str | None:
+    symbol = symbol.strip().upper()
+    return _COMMON_TICKER_FIXES.get(symbol)
+
 
 def _fmt_pct(v: float | None) -> str:
     if v is None:
@@ -184,6 +197,13 @@ with st.form("analyze"):
         # (whose label adds ~28px of height above it).
         st.markdown("<div style='height: 28px'></div>", unsafe_allow_html=True)
         submitted = st.form_submit_button("Analyze", use_container_width=True)
+
+if submitted:
+    suggestion = _suggest_ticker(ticker)
+    if suggestion and suggestion != ticker:
+        st.warning(f"'{ticker}' looks like a typo. Using '{suggestion}' instead.")
+        ticker = suggestion
+        st.session_state["last_ticker"] = ticker
 
 if not submitted and "last_ticker" not in st.session_state:
     st.info("Enter a US-listed ticker (e.g. AAPL, MSFT, KO) and click **Analyze**.")
