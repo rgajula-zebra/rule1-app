@@ -22,6 +22,7 @@ def sticker_price(
     big5_eps_growth: float | None,
     analyst_growth: float | None,
     historical_pe: float | None,
+    custom_growth: float | None = None,
     mos: float = 0.5,
     discount: float = 0.15,
     years: int = 10,
@@ -43,20 +44,33 @@ def sticker_price(
     if current_eps is None or current_eps <= 0:
         return None
 
-    candidates = [g for g in (big5_eps_growth, analyst_growth) if g is not None and g > 0]
-    if not candidates:
-        return None
-
-    growth = min(candidates)
-    growth = min(growth, 0.15)  # cap at 15% — Town's conservatism rule
-    growth_pct = growth * 100
-
-    if big5_eps_growth is not None and analyst_growth is not None:
-        source = "min(big5, analyst)"
-    elif big5_eps_growth is not None:
-        source = "big5"
+    # Use custom growth when provided; otherwise use the lower
+    # of Big5 and analyst growth estimates.
+    if custom_growth is not None and custom_growth > 0:
+        growth = custom_growth
+        source = "custom"
     else:
-        source = "analyst"
+        candidates = [
+            g for g in (big5_eps_growth, analyst_growth)
+            if g is not None and g > 0
+        ]
+
+        if not candidates:
+            return None
+
+        growth = min(candidates)
+
+        if big5_eps_growth is not None and analyst_growth is not None:
+            source = "min(big5, analyst)"
+        elif big5_eps_growth is not None:
+            source = "big5"
+        else:
+            source = "analyst"
+
+    # Cap growth at 15%
+    #growth = min(growth, 0.15) #RG
+
+    growth_pct = growth * 100
 
     default_pe = growth_pct * 2
     if historical_pe is not None and historical_pe > 0:

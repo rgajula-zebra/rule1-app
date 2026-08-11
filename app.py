@@ -17,6 +17,11 @@ from rule1 import (
     peter_lynch_fair,
     sticker_price,
 )
+# import inspect
+
+# st.write("sticker_price loaded from:", inspect.getsourcefile(sticker_price))
+# st.write("sticker_price signature:", inspect.signature(sticker_price))
+
 from rule1.big5 import WINDOWS, PASS_THRESHOLD
 from rule1.fetcher import FetchError
 from rule1.intrinsic import MethodResult
@@ -186,7 +191,7 @@ with st.sidebar:
         max_value=4.0,
         value=2.5,
         step=0.5,
-        format="%f%%",
+        format="%.1f%%",
         help="Perpetual growth rate after the fade period. Should be <= long-run GDP growth (~2.5-3%).",
     ) / 100
     aaa_yield = st.slider(
@@ -384,6 +389,8 @@ def _valuation_growth_rate_label(mode: str) -> str:
         return f"Big 5 EPS growth - {_fmt_pct(big5_eps_g) if big5_eps_g is not None else 'n/a'}"
     if mode == "Analyst 5Y growth":
         return f"Analyst 5Y growth - {_fmt_pct(fin.analyst_5yr_growth) if fin.analyst_5yr_growth is not None else 'n/a'}"
+    if mode == "Custom":
+        return "Custom"
     return mode
 
 
@@ -393,6 +400,7 @@ def _valuation_growth_mode_options() -> list[str]:
         options.append("Big 5 EPS growth")
     if fin.analyst_5yr_growth is not None:
         options.append("Analyst 5Y growth")
+    options.append("Custom")
     return options
 
 mode_options = _valuation_growth_mode_options()
@@ -405,15 +413,25 @@ if "custom_growth_rate" not in st.session_state:
 
 
 def _compute_valuation_value(mode: str):
-    custom_growth_pct = float(st.session_state.get("custom_growth_rate", 0) or 0)
-    custom_growth = custom_growth_pct / 100.0 if custom_growth_pct > 0 else 0.0
-
-    if custom_growth > 0:
+    st.write(
+        "DEBUG COMPUTE:",
+        mode,
+        "analyst=",
+        fin.analyst_5yr_growth,
+        "custom=",
+        st.session_state.get("custom_growth_rate"),
+    )
+    if mode == "Custom":
+        custom_growth_pct = float(st.session_state.get("custom_growth_rate", 0) or 0)
+        if custom_growth_pct <= 0:
+            return None
+        custom_growth = custom_growth_pct / 100.0
         return sticker_price(
             current_eps=current_eps,
-            big5_eps_growth=custom_growth,
-            analyst_growth=custom_growth,
+            big5_eps_growth=None,
+            analyst_growth=None,
             historical_pe=fin.pe_ratio_ttm,
+            custom_growth=custom_growth,
         )
 
     if mode == "Rule #1 conservative":
@@ -438,14 +456,17 @@ def _compute_valuation_value(mode: str):
             historical_pe=fin.pe_ratio_ttm,
         )
 
-    if fin.analyst_5yr_growth is None:
-        return None
-    return sticker_price(
-        current_eps=current_eps,
-        big5_eps_growth=None,
-        analyst_growth=fin.analyst_5yr_growth,
-        historical_pe=fin.pe_ratio_ttm,
-    )
+    if mode == "Analyst 5Y growth":
+        if fin.analyst_5yr_growth is None:
+            return None
+        return sticker_price(
+            current_eps=current_eps,
+            big5_eps_growth=None,
+            analyst_growth=fin.analyst_5yr_growth,
+            historical_pe=fin.pe_ratio_ttm,
+        )
+
+    return None
 
 
 # The valuation result is intentionally recomputed from the current selected
@@ -616,34 +637,50 @@ else:
     _render_verdict_cell(v4, v_verdict, v_detail, v_color)
     _render_analyst_cell(v5, fin)
 
-    radio_col, custom_col, button_col = st.columns([7, 2.2, 1.8])
-    with radio_col:
+    growth_group_col, button_col = st.columns([8.2, 1.8])
+    with growth_group_col:
+        st.markdown(
+            "<div style='font-size: 0.875rem; margin-bottom: 0.25rem;'>Growth source</div>",
+            unsafe_allow_html=True,
+        )
+        radio_col, custom_col = st.columns([6.5, 1.7])
+        #with radio_col:
+        #    st.markdown("<div style='height: 0.65rem;'></div>", unsafe_allow_html=True)
+        # RADIO BUTTONS
         selected_growth_mode = st.radio(
-            "Growth source - try changing to a different growth rate to see how the Sticker Price changes or input a custom growth rate below.",
+            "Growth source",
             options=mode_options,
-            index=mode_options.index(st.session_state.get("valuation_growth_mode", "Rule #1 conservative")),
             horizontal=True,
             format_func=_valuation_growth_rate_label,
             key="valuation_growth_mode",
+            label_visibility="collapsed",
         )
-    with custom_col:
-        st.markdown("<div style='height: 1.9rem;'></div>", unsafe_allow_html=True)
-        st.number_input(
-            "Custom growth %",
-            key="custom_growth_rate",
-            min_value=0,
-            max_value=100,
-            value=int(st.session_state["custom_growth_rate"] or 0),
-            step=1,
-            format="%d",
-            help="Optional override in whole percentage points. Enter 1–100 to force that custom growth rate.",
-        )
+        custom_col, button_col, spacer_col = st.columns([1.7, 1.8, 6.5])
+        with custom_col:
+            st.markdown(
+                "<div style='font-size: 0.75rem; color: #9aa0a6; margin-bottom: 0.15rem;'>Custom %</div>",
+                unsafe_allow_html=True,
+            )
+            st.number_input(
+                "Custom %",
+                key="custom_growth_rate",
+                min_value=1,
+                max_value=100,
+                step=1,
+                format="%d",
+                disabled=(selected_growth_mode != "Custom"),
+                label_visibility="collapsed",
+                help="Select the 'Custom' radio option, then set this to force that whole-number growth rate.",
+            )
     with button_col:
         st.markdown("<div style='height: 1.9rem;'></div>", unsafe_allow_html=True)
         revalue_button = st.button("RE-VALUATE", use_container_width=True)
 
+    st.caption(f"DEBUG — mode: {selected_growth_mode} | custom box: {st.session_state.get('custom_growth_rate')}")
+
     if revalue_button:
         st.session_state["valuation_growth_result"] = _compute_valuation_value(selected_growth_mode)
+        st.session_state["valuation_calculated_mode"] = selected_growth_mode
         st.rerun()
 
     with st.expander("How the Sticker Price was calculated"):
